@@ -21,6 +21,7 @@ struct MainView: View {
     @StateObject private var elk = ELKStrip.shared
     @StateObject private var ride = RideTracker.shared
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.scenePhase) private var scenePhase
 
     // 授权门（App 持有）：授权卡片显示状态、更换授权码用。
     @ObservedObject var licenseGate: LicenseGate
@@ -46,6 +47,7 @@ struct MainView: View {
     @AppStorage("nbc.hud.position") private var hudPosition = 0 // 0 右下 1 左下 2 左上 3 右上
     @AppStorage("nbc.hud.fontSize") private var hudFontSize = 1 // 0 小 1 中 2 大
     @AppStorage("nbc.keepAlive") private var keepAlive = true
+    @AppStorage("nbc.keepScreenOnWhileCasting") private var keepScreenOnWhileCasting = true // 1.3.25 投屏时屏幕常亮：默认开，投屏/镜像进行中不自动锁屏
     @AppStorage("nbc.speedLimit") private var speedLimit = 60 // 限速 km/h：35...80，每 5 一档，默认 60
     @AppStorage("nbc.speedAlert") private var speedAlert = true
     @State private var gopIndex = 25            // 关键帧间隔（帧）
@@ -141,8 +143,16 @@ struct MainView: View {
             if host.isEmpty { host = LanScanner.gatewayGuess() ?? "" }
             applyQuality(qualityIndex)
             postHUDSettings()
+            updateIdleTimer()
             diagText = Diag.tail(16)
             Diag.log("MainView 出现，版本 \(AppVersion.display)，IP=\(host.isEmpty ? "未填" : host)")
+        }
+        .onChange(of: engine.isRunning) { _ in updateIdleTimer() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { updateIdleTimer() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
+            updateIdleTimer()
         }
         .onChange(of: pickedItem) { item in
             guard let item else { return }
@@ -625,6 +635,15 @@ struct MainView: View {
     /// 改了设置就立刻发给录屏扩展（Darwin 通知），之后每 2 秒还会重发。
     private func postHUDSettings() {
         HUDSettingsRelay.update(hudSettings)
+    }
+
+    /// 投屏时屏幕常亮（1.3.25）：开关开着且正在投屏（普通投屏 engine 跑着，
+    /// 或屏幕镜像录制中，UIScreen.isCaptured 为真），就禁掉自动锁屏；
+    /// 投屏停了或开关关了就恢复。手动按电源键锁屏不受影响，照样会锁。
+    /// 镜像状态 App 侧没有现成回调：扩展是独立进程且无 App Groups，
+    /// 不会把开播状态报回来，所以用系统录屏状态 isCaptured 来判断。
+    private func updateIdleTimer() {
+        UIApplication.shared.isIdleTimerDisabled = keepScreenOnWhileCasting && (engine.isRunning || UIScreen.main.isCaptured)
     }
 
     private var hudCard: some View {
@@ -1118,6 +1137,13 @@ struct MainView: View {
                     }
                 }
             Text("开着时 App 退后台也不停：BMS 继续轮询、接力继续发；关了只在投屏时保活")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+            Toggle("投屏时屏幕常亮", isOn: $keepScreenOnWhileCasting)
+                .font(.subheadline)
+                .onChange(of: keepScreenOnWhileCasting) { _ in updateIdleTimer() }
+            Text("开着时投屏或镜像进行中屏幕不自动熄灭，防止锁屏断开；关了按系统设置自动锁屏")
                 .font(.caption2)
                 .foregroundColor(.secondary)
 
