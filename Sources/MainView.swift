@@ -40,8 +40,9 @@ struct MainView: View {
     @AppStorage("nbc.hud.showSignal") private var hudShowSignal = true
     @AppStorage("nbc.hud.showBattery") private var hudShowBattery = true
     @AppStorage("nbc.hud.showVolume") private var hudShowVolume = true
-    @AppStorage("nbc.hud.showBMS") private var hudShowBMS = true
-    @AppStorage("nbc.hud.showSlot") private var hudShowSlot = false // 1.3.18 翻页时钟：和电池 BMS 互斥
+    @AppStorage("nbc.hud.showBMS") private var hudShowBMS = false // 1.3.24 默认关：用户没改锂电池，用不着默认开 BMS
+    @AppStorage("nbc.hud.showSlot") private var hudShowSlot = true // 1.3.24 翻页时钟默认开：和电池 BMS 互斥
+    @AppStorage("nbc.migrated.hudFlipClockDefault") private var migratedHUDFlipClockDefault = false // 1.3.24 一次性迁移标记：翻页时钟默认开、BMS 默认关
     @AppStorage("nbc.hud.position") private var hudPosition = 0 // 0 右下 1 左下 2 左上 3 右上
     @AppStorage("nbc.hud.fontSize") private var hudFontSize = 1 // 0 小 1 中 2 大
     @AppStorage("nbc.keepAlive") private var keepAlive = true
@@ -128,6 +129,14 @@ struct MainView: View {
         }
         .sheet(isPresented: $showTools) { toolsSheet }
         .onAppear {
+            // 1.3.24 一次性迁移：翻页时钟默认开、电池 BMS 默认关（用户没改锂电池，用不着默认开 BMS）。
+            // @AppStorage 的代码默认值只对从未写过键的新装机生效，老用户手机上已存的值会覆盖它，
+            // 所以这里跑一次把新默认值写进去；跑完置标记，之后用户自己拨开关不再受影响。
+            if !migratedHUDFlipClockDefault {
+                hudShowBMS = false
+                hudShowSlot = true
+                migratedHUDFlipClockDefault = true
+            }
             localIP = LanScanner.localIPv4() ?? "未连 Wi-Fi"
             if host.isEmpty { host = LanScanner.gatewayGuess() ?? "" }
             applyQuality(qualityIndex)
