@@ -684,6 +684,17 @@ struct MainView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
+                // 1.3.22（朋友版唤醒修法移植）：连的不是 ANT 设备时提示；FFE0 下全部特征列表。
+                if let note = antbms.selectionNote {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+                if let chars = antbms.charInfo {
+                    Text("特征：\(chars)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
                 if let s = antbms.snapshot {
                     Text(String(format: "总电压 %.2fV　电流 %.1fA　功率 %.0fW　SOC %.1f%%",
                                 s.voltage, s.current, s.power, s.soc))

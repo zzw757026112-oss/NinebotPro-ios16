@@ -3,6 +3,8 @@ import CoreBluetooth
 import Foundation
 
 /// ANT BMS（MAYI/JNFN）电池数据：朋友那辆换了锂电池的车。
+/// 1.3.22：移植朋友版唤醒修法——扫描优先连 ANT 名字的设备；
+/// 静默 60 秒才断开重连；发现 FFE0 下全部特征记到诊断里。
 ///
 /// 只针对新格式 7E A1 帧的 ANT BMS，不兼容老 AA55AAFF 格式和
 /// 其他品牌（JK/Daly/JBD 是不同协议）。只编进主 App（Sources/），
@@ -56,6 +58,10 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
     @Published private(set) var notifyOn = false
     @Published private(set) var lastFrameInfo: String?
     @Published private(set) var lastRxAt: Date?
+    /// 1.3.22（朋友版唤醒修法移植）：FFE0 下发现到的全部特征（看有没有 ANT App 用来唤醒的第二个特征）。
+    @Published private(set) var charInfo: String?
+    /// 1.3.22（朋友版唤醒修法移植）：选中的设备是不是 ANT 名字的；不是就写清楚连的是谁。
+    @Published private(set) var selectionNote: String?
 
     private static let serviceUUID = CBUUID(string: "FFE0")
     private static let cmdUUID = CBUUID(string: "FFE1")
@@ -68,12 +74,11 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var cmdChar: CBCharacteristic?
-    private var candidates: [UUID: (peripheral: CBPeripheral, rssi: Int)] = [:]
+    private var candidates: [UUID: (peripheral: CBPeripheral, rssi: Int, isANT: Bool)] = [:]
     private var scanTimer: Timer?
     private var pollTimer: Timer?
     private var reconnectTimer: Timer?
     private var notifyFallbackTimer: Timer?
-    private var writeProbeDone = false
     private var rxBuffer = Data()
 
     private override init() {
@@ -97,7 +102,8 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
         notifyOn = false
         lastFrameInfo = nil
         lastRxAt = nil
-        writeProbeDone = false
+        charInfo = nil
+        selectionNote = nil
         stage = central.state == .poweredOn ? "搜索中" : "等蓝牙开启"
         if central.state == .poweredOn {
             startScan()
@@ -127,7 +133,8 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
         notifyOn = false
         lastFrameInfo = nil
         lastRxAt = nil
-        writeProbeDone = false
+        charInfo = nil
+        selectionNote = nil
         ANTBMSRelay.clear()
     }
 
@@ -149,14 +156,18 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
         central.stopScan()
         isScanning = false
         guard isEnabled else { return }
-        // 选 RSSI 最强的一台；一台都没发现就继续扫。
-        guard let best = candidates.values.max(by: { $0.rssi < $1.rssi }) else {
+        // 1.3.22（朋友版唤醒修法移植）：优先连名字带 ANT 的；附近没有 ANT 设备时才退到任意
+        // FFE0 设备（不断错，也不把改名后的板子排除掉）。再按 RSSI 最强挑。
+        let ant = candidates.values.filter { $0.isANT }
+        let pool = ant.isEmpty ? Array(candidates.values) : ant
+        guard let best = pool.max(by: { $0.rssi < $1.rssi }) else {
             startScan()
             return
         }
         peripheral = best.peripheral
         deviceName = best.peripheral.name ?? "ANT BMS"
         rssi = best.rssi
+        selectionNote = best.isANT ? nil : "附近没有 ANT 设备，当前连的是 \(deviceName ?? "?")（仅 FFE0 服务）"
         stage = "连接中"
         central.connect(best.peripheral, options: nil)
     }
@@ -201,17 +212,16 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let name = peripheral.name ?? ""
-        let hasPrefix = name.hasPrefix("ANT-BLE") || name.hasPrefix("ANT@BLE")
+        let isANT = name.hasPrefix("ANT-BLE") || name.hasPrefix("ANT@BLE")
         let services = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
         let hasService = services.contains(Self.serviceUUID)
-        guard hasPrefix || hasService else { return }
-        candidates[peripheral.identifier] = (peripheral, RSSI.intValue)
+        guard isANT || hasService else { return }
+        candidates[peripheral.identifier] = (peripheral, RSSI.intValue, isANT)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         isConnected = true
         lastError = nil
-        writeProbeDone = false
         stage = "发现服务"
         peripheral.delegate = self
         peripheral.discoverServices([Self.serviceUUID])
@@ -251,13 +261,30 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
             scheduleReconnect()
             return
         }
-        peripheral.discoverCharacteristics([Self.cmdUUID], for: service)
+        // 1.3.22（朋友版唤醒修法移植）：发现 FFE0 下全部特征，不只 FFE1——看有没有 ANT App
+        // 用来唤醒的第二个特征；列表记到 charInfo 供卡片显示。
+        peripheral.discoverCharacteristics(nil, for: service)
         stage = "发现特征"
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard error == nil,
-              let ch = service.characteristics?.first(where: { $0.uuid == Self.cmdUUID }) else {
+              let chars = service.characteristics, !chars.isEmpty else {
+            lastError = "没找到 FFE1 特征"
+            central.cancelPeripheralConnection(peripheral)
+            scheduleReconnect()
+            return
+        }
+        charInfo = chars.map { c in
+            var props: [String] = []
+            if c.properties.contains(.read) { props.append("读") }
+            if c.properties.contains(.write) { props.append("写") }
+            if c.properties.contains(.writeWithoutResponse) { props.append("写无回应") }
+            if c.properties.contains(.notify) { props.append("通知") }
+            if c.properties.contains(.indicate) { props.append("指示") }
+            return "\(c.uuid.uuidString)(\(props.joined(separator: "/")))"
+        }.joined(separator: " ")
+        guard let ch = chars.first(where: { $0.uuid == Self.cmdUUID }) else {
             lastError = "没找到 FFE1 特征"
             central.cancelPeripheralConnection(peripheral)
             scheduleReconnect()
@@ -277,12 +304,11 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
     /// 订阅确认后（或 3 秒超时后）开始轮询。
     private func startPollingIfNeeded() {
         guard isEnabled, isConnected, cmdChar != nil, pollTimer == nil else { return }
-        // 每次（重）连接都从零开始记：这样静默重连的 10 秒判断才准，
+        // 每次（重）连接都从零开始记：这样静默重连的 60 秒判断才准，
         // 卡片上的“已发/收到”也是本次连接的数。
         pollCount = 0
         rxBytes = 0
         lastRxAt = nil
-        writeProbeDone = false
         rxBuffer.removeAll()
         stage = "轮询中"
         // 1.2.6：先读一次 FFE1——有的保护板收到读请求才回第一帧；
@@ -318,11 +344,10 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
     private func sendPoll() {
         guard let p = peripheral, let ch = cmdChar, isConnected else { return }
         pollCount += 1
-        // 1.2.6：静默重连——保护板会“睡着”：连着、写得进（带回应写入
-        // 也确认），就是不回帧；朋友实测必须开保护板 APP 才恢复，
-        // 不开它连 Ninebot Pro+ 自己的卡片也不更新。10 秒没收到任何
-        // 字节就主动断开重连：重新连接+订阅常能把它唤醒（很多保护板
-        // 连上/订阅后就发一帧）。走现成的断开回调 didDisconnectPeripheral
+        // 1.3.22（朋友版唤醒修法移植）：静默不断开的时限从 10 秒放宽到 60 秒——保护板唤醒得慢，
+        // 10 秒一切就永远等不到它醒（朋友实测：连上发 10 次 0 字节，循环
+        // 2 分钟还是 0 字节；ANT App 是连上不挂断一直等）。60 秒还没收到
+        // 任何字节才主动断开重连。走现成的断开回调 didDisconnectPeripheral
         // → scheduleReconnect（2 秒后重扫）。没回过包时按轮询次数算
         // 静默秒数（1 秒一询）。
         let silentSeconds: TimeInterval
@@ -331,19 +356,20 @@ final class ANTBMS: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
         } else {
             silentSeconds = TimeInterval(pollCount)
         }
-        if silentSeconds >= 10 {
+        if silentSeconds >= 60 {
             stage = "没回包，重连唤醒中"
-            lastFrameInfo = "10 秒没回包，断开重连唤醒"
+            lastFrameInfo = "60 秒没回包，断开重连唤醒"
             central.cancelPeripheralConnection(p)
             return
         }
         p.writeValue(Self.pollCommand, for: ch, type: .withoutResponse)
-        // 1.3.10：每轮再读一次 FFE1——睡着的保护板不理“写”，但“读”是必须回的请求
-        //（朋友版 102 实测：连接时那次读拿到了第一帧，之后只写就再没回包）。
+        // 朋友版 102：每轮再读一次 FFE1——睡着的保护板不理“写”，但“读”
+        // 是必须回的请求。23:12 实测：连接时那次读拿到了第一帧（178B），
+        // 之后只写就再没回包（19 次 0 新字节）。读写都做，读回来的值
+        // 也走 didUpdateValueFor。
         p.readValue(for: ch)
-        // 3 次轮询都没回包：补一次带回应写入，看写入本身通不通。
-        if pollCount == 3, rxBytes == 0, !writeProbeDone {
-            writeProbeDone = true
+        // 没回包时每 10 次补一次带回应写入，看写入本身通不通。
+        if pollCount % 10 == 0, rxBytes == 0 {
             p.writeValue(Self.pollCommand, for: ch, type: .withResponse)
         }
     }
