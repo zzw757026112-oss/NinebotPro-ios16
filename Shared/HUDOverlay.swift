@@ -419,7 +419,9 @@ enum HUDRenderer {
     private static let flipDuration: TimeInterval = 0.35
 
     /// 每帧调一次，推进翻页时钟状态。返回：是否有格子正在翻页
-    /// （翻页时 layer() 用 150ms 档重画；平时走正常 1 秒节流）。
+    /// （翻页时 layer() 用 50ms 档重画——跟 20fps 输出同速，0.35 秒翻页
+    /// 有约 7 帧才顺滑；0.15 秒档只有 2–3 帧，秒位个位数翻起来卡卡的。
+    /// 平时走正常 1 秒节流）。
     private static func flipTick(now: Date, enabled: Bool) -> Bool {
         guard enabled else {
             // 没开翻页时钟：状态归零，下次开从当前时间直接显示（不翻）。
@@ -531,13 +533,13 @@ enum HUDRenderer {
     private static func layer(forWidth width: Int, height: Int) -> CGImage? {
         let snap = HUDData.shared.snapshot()
         let settings = HUDSettingsRelay.current
-        // 翻页时钟（1.3.18）：每帧推进一次翻页状态；
-        // 翻页时缓存键里加一个 150ms 档位，逼重画跟上动画；
+        // 翻页时钟（1.3.20）：每帧推进一次翻页状态；
+        // 翻页时缓存键里加一个 50ms 档位，逼重画跟上动画（跟 20fps 同速）；
         // 秒数进缓存键，时间每秒变、层每秒重画。
         let now = Date()
         let flipMoving = flipTick(now: now, enabled: settings.showSlot)
         let secondBucket = Int(now.timeIntervalSinceReferenceDate)
-        let flipBucket = flipMoving ? Int(now.timeIntervalSinceReferenceDate / 0.15) : -1
+        let flipBucket = flipMoving ? Int(now.timeIntervalSinceReferenceDate / 0.05) : -1
         let settingsKey = "\(settings.showDate ? 1 : 0)\(settings.showWeather ? 1 : 0)\(settings.showSignal ? 1 : 0)\(settings.showBattery ? 1 : 0)\(settings.showVolume ? 1 : 0)\(settings.showBMS ? 1 : 0)\(settings.showSlot ? 1 : 0)|\(settings.position.rawValue)|\(settings.fontSize.rawValue)"
         let bmsKey = snap.bms.map { "\($0.voltage)|\($0.current)|\($0.power)|\($0.soc)|\($0.maxTemp)|\($0.delta)" } ?? "-"
         let speedKey = snap.speed.map { "\($0.kmh)" } ?? "-"
@@ -546,8 +548,8 @@ enum HUDRenderer {
         defer { lock.unlock() }
         if key == cachedKey, let layer = cachedLayer { return layer }
         // 内容变了但离上次重画不到节流间隔：先用旧层，不阻塞帧路径。
-        // 平时 1 秒；翻页在动时 0.15 秒（翻页动画才跟得上）。
-        let minInterval = flipMoving ? 0.15 : 1.0
+        // 平时 1 秒；翻页在动时 0.05 秒（跟 20fps 同速，翻页动画才跟得上）。
+        let minInterval = flipMoving ? 0.05 : 1.0
         if let layer = cachedLayer, Date().timeIntervalSince(lastRender) < minInterval {
             return layer
         }
