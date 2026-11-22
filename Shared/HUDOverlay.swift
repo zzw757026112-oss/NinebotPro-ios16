@@ -688,7 +688,7 @@ enum HUDRenderer {
                               isLowBattery ? red : white))
         }
         // ANT BMS 单独一块面板（1.3.11，同朋友版 105）：放在右上角车辆自带表盘下面，
-        // 宽度跟那个表盘对齐；三排、每排两个——电压/电流、功率/电量、最高温/压差。
+        // 1.3.20 起右沿跟翻页时钟对齐（836），宽 281 不变；三排、每排两个——电压/电流、功率/电量、最高温/压差。
         // 不再放进底下那个胶囊。
         var bmsItems: [String] = []
         // 翻页时钟和 BMS 面板互斥：翻页时钟开时 BMS 面板不画（设置页里也会互斥关，
@@ -762,10 +762,12 @@ enum HUDRenderer {
             }
         }
 
-        // 1.3.11：有 BMS 面板时，胶囊宽度跟它对齐（281，左沿 375），上下两块一样宽。
-        // 1.3.18：没 BMS 时（翻页时钟在用），胶囊强制 204 宽，跟翻页时钟/表盘对齐。
+        // 1.3.20：BMS 面板改跟翻页时钟右对齐（右沿 836），不再按表盘左沿 375。
+        // 面板宽 281 不变（电池数据多：电压/电流、功率/电量、最高温/压差六项），
+        // 左沿 555，比翻页时钟（左沿 632）多往左伸一点，用户说没关系。
+        // 胶囊有 BMS 时也跟面板对齐（pillX 用 bmsPanelX），右沿同样 836。
         let bmsPanelW = CGFloat(281) * sx
-        let bmsPanelX = CGFloat(375) * sx
+        let bmsPanelX = (refWidth - marginRightRef - CGFloat(281)) * sx
         var pillW = contentWidth + padX * 2
         if !bmsItems.isEmpty {
             pillW = max(pillW, bmsPanelW)
@@ -851,10 +853,10 @@ enum HUDRenderer {
         }
         } // if !measuredRows.isEmpty
 
-        // ---- ANT BMS 单独面板（1.3.11，同朋友版 105）：右上角车辆自带表盘下面，宽度跟它对齐 ----
+        // ---- ANT BMS 单独面板（1.3.11，同朋友版 105）：右上角车辆自带表盘下面 ----
         // 1.3.14：紧贴表盘底沿（顶边 222，离底沿 8px），不再在表盘和胶囊之间垂直居中——
         // 居中会把它推到屏幕中部、压住地图/画面（用户 2026-11-21 照片反馈）。
-        // 位置是按仪表照片量的（848×480 参考系）：表盘左沿 375、宽 281、底沿 214。
+        // 1.3.20：右沿改跟翻页时钟对齐（836），宽 281 不变，左沿 555（比翻页时钟多往左伸，用户说没关系）。
         if !bmsItems.isEmpty {
             let bmsLeft = bmsPanelX
             let bmsW = bmsPanelW
