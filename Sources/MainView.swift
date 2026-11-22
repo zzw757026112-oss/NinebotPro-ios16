@@ -97,6 +97,7 @@ struct MainView: View {
                     connectionCard
                     sourceCard
                     mirrorCard
+                    displayModeCard
                     hudCard
                     bmsCard
                     elkCard
@@ -573,6 +574,12 @@ struct MainView: View {
             Text("方向默认自动跟随手机；自动转不正时手动选 90° 或 270°，下一帧就生效，不用重开镜像。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
+        }
+    }
+
+    // MARK: - 显示模式（铺满/完整/拉伸；普通投屏和屏幕镜像都用）
+    private var displayModeCard: some View {
+        card("显示模式", icon: "aspectratio") {
             Picker("显示", selection: $displayMode) {
                 Text("铺满").tag(0)
                 Text("完整").tag(1)
@@ -580,9 +587,6 @@ struct MainView: View {
             }
             .pickerStyle(.segmented)
             Text("铺满：铺满全屏，左右各裁掉一点；完整：整幅画面都可见，上下留黑边；拉伸：整幅画面铺满仪表，横向略压扁。手机画面比仪表宽，铺满和不裁剪没法同时做到。下一帧就生效，不用重开镜像。")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-            Text("仪表右下角会叠加一个小胶囊：日期和天气、信号、电量，来电时左下角显示红色“来电”。位置和显示项可以在下面 HUD 设置里改。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
@@ -643,7 +647,7 @@ struct MainView: View {
                 Text("大").tag(2)
             }
             .pickerStyle(.segmented)
-            Text("右上会挡住仪表自己的电量显示。改完先打开一次 App，再开镜像才生效；直接从控制中心开镜像、App 没跑过，就用默认（全显示、右下、中字）。")
+            Text("仪表右下角会叠加一个小胶囊：日期和天气、手机信号、手机电量等等，来电时左下角显示红色“来电”。位置和显示项可以在上面设置修改。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
@@ -975,11 +979,14 @@ struct MainView: View {
             Stepper(value: $speedLimit, in: 35...80, step: 5) {
                 Text("限速 \(speedLimit) km/h").font(.subheadline)
             }
-            Toggle("超速提醒（震动 + 提示音 + 手机通知，仪表 HUD 变红）", isOn: $speedAlert)
+            Toggle("超速提醒", isOn: $speedAlert)
                 .font(.subheadline)
                 .onChange(of: speedAlert) { on in
                     if on { OverspeedNotifier.requestAuthorization() }
                 }
+            Text("震动 + 提示音 + 手机通知，仪表 HUD 变红。")
+                .font(.caption2)
+                .foregroundColor(.secondary)
             if !ride.rides.isEmpty {
                 DisclosureGroup(isExpanded: $showRideHistory) {
                     List {
