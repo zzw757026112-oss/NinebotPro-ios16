@@ -2,10 +2,14 @@ import CryptoKit
 import Foundation
 import Security
 
-/// 离线授权码：无服务器，HMAC-SHA256 签名 + Crockford base32。
-/// 码格式 16 字符，分 4 组：XXXX-XXXX-XXXX-XXXX
-///   - 前 4 字符（20 bit）：有效期 = 2026-01-01 起的天数；0 = 永久
-///   - 后 12 字符（60 bit）：HMAC-SHA256(secret, "NB1|<天数>") 的前 60 bit
+/// 离线授权码 v2（一码一机）：无服务器，HMAC-SHA256 签名 + Crockford base32。
+/// 码格式 24 字符，分 6 组：XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
+///   - 字符 0-3（20 bit）：有效期 = 2026-01-01 起的天数；0 = 永久
+///   - 字符 4-11：设备短码（8 位大写十六进制，取本机设备 UUID 前 8 位）
+///   - 字符 12-23（60 bit）：HMAC-SHA256(secret, "NB2|<天数>|<设备短码>") 的前 60 bit
+/// 设备 ID：首次启动生成一个 UUID 存钥匙串（account "device-id"），删 App
+/// 重装仍在（钥匙串保留），只有抹掉设备才会变。
+/// v1 的 16 字符码不再接受（无向后兼容）——旧码（含永久码）一律失效。
 /// 生成器在 tools/gen_license.py（不进仓库），与这里逐位一致。
 /// 注意：密钥嵌在 App 里；仓库是公开的，懂行的人能从源码/二进制里找到
 /// 它并自己生成码——这是一把防普通用户的锁，不是防不住的加密。
@@ -20,6 +24,7 @@ enum LicenseManager {
     }()
     private static let keychainService = "com.corpsezhao.ninebotcast.license"
     private static let keychainAccount = "activation-code"
+    private static let deviceIDAccount = "device-id"
 
     enum Status {
         case valid(expiry: Date?)
@@ -30,6 +35,29 @@ enum LicenseManager {
             return false
         }
     }
+
+    // MARK: - 设备 ID（一码一机）
+    /// 本机设备短码：8 位大写十六进制，取设备 UUID 前 8 位。
+    /// 显示在激活页上，用户凭它生成专属授权码。
+    static var deviceShortCode: String {
+        String(deviceUUID().prefix(8)).uppercased()
+    }
+
+    /// 本机设备 UUID（完整，带连字符）。首次调用生成并存钥匙串；
+    /// 进程内缓存，钥匙串读写失败时仍保证同一次启动内稳定。
+    static func deviceUUID() -> String {
+        if let cached = _cachedDeviceUUID { return cached }
+        if let stored = keychainLoad(account: deviceIDAccount),
+           UUID(uuidString: stored) != nil {
+            _cachedDeviceUUID = stored
+            return stored
+        }
+        let fresh = UUID().uuidString
+        _ = keychainSave(account: deviceIDAccount, value: fresh)
+        _cachedDeviceUUID = fresh
+        return fresh
+    }
+    private static var _cachedDeviceUUID: String?
 
     // MARK: - 编解码
     static func normalize(_ code: String) -> String {
@@ -75,9 +103,9 @@ enum LicenseManager {
         return data
     }
 
-    private static func signature60(expiryDays: Int) -> UInt64 {
+    private static func signature60(expiryDays: Int, deviceCode: String) -> UInt64 {
         let key = SymmetricKey(data: secretData())
-        let mac = HMAC<SHA256>.authenticationCode(for: Data("NB1|\(expiryDays)".utf8), using: key)
+        let mac = HMAC<SHA256>.authenticationCode(for: Data("NB2|\(expiryDays)|\(deviceCode)".utf8), using: key)
         var value: UInt64 = 0
         for byte in mac.prefix(8) {
             value = (value << 8) | UInt64(byte)
@@ -100,14 +128,17 @@ enum LicenseManager {
         return f.string(from: date)
     }
 
-    // MARK: - 验证
+    // MARK: - 验证（v2，24 字符；v1 的 16 字符码直接拒绝）
     static func validate(code: String) -> Status {
         let s = normalize(code)
-        guard s.count == 16 else { return .invalid }
+        guard s.count == 24 else { return .invalid }
         guard s.allSatisfy({ alphabetIndex[$0] != nil }) else { return .invalid }
         guard let expiryDays = base32Decode(String(s.prefix(4))),
-              let sig = base32Decode(String(s.dropFirst(4))) else { return .invalid }
-        guard sig == signature60(expiryDays: Int(expiryDays)) else { return .invalid }
+              let sig = base32Decode(String(s.dropFirst(12))) else { return .invalid }
+        let deviceCode = String(s.dropFirst(4).prefix(8))
+        guard deviceCode.allSatisfy({ $0.isHexDigit }) else { return .invalid }
+        guard deviceCode == deviceShortCode else { return .invalid }
+        guard sig == signature60(expiryDays: Int(expiryDays), deviceCode: deviceCode) else { return .invalid }
         if expiryDays == 0 { return .valid(expiry: nil) }
         let expiry = expiryDate(days: Int(expiryDays))
         let today = calendar.startOfDay(for: Date())
@@ -115,13 +146,13 @@ enum LicenseManager {
         return .valid(expiry: expiry)
     }
 
-    // MARK: - 钥匙串（App 与录屏扩展默认共享同一访问组）
-    static func saveCode(_ code: String) -> Bool {
-        let data = Data(normalize(code).utf8)
+    // MARK: - 钥匙串（App 专用；扩展自 1.1.6 起不再验授权码）
+    private static func keychainSave(account: String, value: String) -> Bool {
+        let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccount as String: account,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
@@ -130,7 +161,7 @@ enum LicenseManager {
             let updateQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: keychainService,
-                kSecAttrAccount as String: keychainAccount
+                kSecAttrAccount as String: account
             ]
             return SecItemUpdate(updateQuery as CFDictionary,
                                  [kSecValueData as String: data] as CFDictionary) == errSecSuccess
@@ -138,19 +169,27 @@ enum LicenseManager {
         return status == errSecSuccess
     }
 
-    static func loadCode() -> String? {
+    private static func keychainLoad(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data,
-              let code = String(data: data, encoding: .utf8) else { return nil }
-        return code
+              let value = String(data: data, encoding: .utf8) else { return nil }
+        return value
+    }
+
+    static func saveCode(_ code: String) -> Bool {
+        keychainSave(account: keychainAccount, value: normalize(code))
+    }
+
+    static func loadCode() -> String? {
+        keychainLoad(account: keychainAccount)
     }
 
     static func clearCode() {

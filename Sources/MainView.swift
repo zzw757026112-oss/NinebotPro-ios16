@@ -1035,6 +1035,9 @@ struct MainView: View {
             Text("授权码由作者提供；换码后重新开一次镜像就生效。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
+            Text("本机设备号：\(LicenseManager.deviceShortCode)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
     }
 

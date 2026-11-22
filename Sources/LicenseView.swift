@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 授权门：App 启动时查一次钥匙串里的授权码，回到前台时再查一次
 ///（码过期后不用重装，重新打开 App 就会回到激活页）。
@@ -21,10 +22,12 @@ final class LicenseGate: ObservableObject {
 }
 
 /// 激活页：未激活时全屏挡住主界面；激活成功后自动进主界面。
+/// v2（一码一机）：页上显示本机设备号，未激活也能复制发给授权方。
 struct LicenseView: View {
     @ObservedObject var gate: LicenseGate
     @State private var code = ""
     @State private var message: String? = nil
+    @State private var copiedDeviceCode = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -41,7 +44,34 @@ struct LicenseView: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
-                TextField("XXXX-XXXX-XXXX-XXXX", text: $code)
+                // 设备号：未激活时也要能看到，复制发给授权方才能生成专属码。
+                VStack(spacing: 8) {
+                    Text("本机设备号")
+                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 10) {
+                        Text(LicenseManager.deviceShortCode)
+                            .font(.system(.title3, design: .monospaced).weight(.bold))
+                        Button(copiedDeviceCode ? "已复制" : "复制设备号") {
+                            UIPasteboard.general.string = LicenseManager.deviceShortCode
+                            copiedDeviceCode = true
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.blue))
+                        .foregroundColor(.white)
+                        .buttonStyle(.plain)
+                    }
+                    Text("把设备号发给授权码提供方，生成你的专属授权码")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.06))
+                .cornerRadius(10)
+
+                TextField("XXXX-XXXX-XXXX-XXXX-XXXX-XXXX", text: $code)
                     .textInputAutocapitalization(.characters)
                     .disableAutocorrection(true)
                     .keyboardType(.asciiCapable)
@@ -68,7 +98,7 @@ struct LicenseView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                Text("授权码由作者提供；过期后请重新输入新的授权码。")
+                Text("授权码只对本机有效；过期后请重新输入新的授权码。")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
