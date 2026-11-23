@@ -855,13 +855,14 @@ enum HUDRenderer {
 
         // ---- ANT BMS 单独面板（1.3.11，同朋友版 105）：右上角车辆自带表盘下面 ----
         // 1.3.14：紧贴表盘底沿（顶边 222，离底沿 8px），不再在表盘和胶囊之间垂直居中——
+        // 1.3.26：顶边 222→280（朋友版 1.2.10/1.2.11 实测不挡表盘），只往下挪 58px，宽 281、右沿 836 不变。
         // 居中会把它推到屏幕中部、压住地图/画面（用户 2026-11-21 照片反馈）。
         // 1.3.20：右沿改跟翻页时钟对齐（836），宽 281 不变，左沿 555（比翻页时钟多往左伸，用户说没关系）。
         if !bmsItems.isEmpty {
             let bmsLeft = bmsPanelX
             let bmsW = bmsPanelW
             let bmsH = padY * 2 + rowHeight * 3 + rowGap * 2
-            let bmsTopFromTop: CGFloat = CGFloat(222) * sy
+            let bmsTopFromTop: CGFloat = CGFloat(280) * sy
             let bmsY = h - bmsTopFromTop - bmsH
             let bmsPanel = CGRect(x: bmsLeft, y: bmsY, width: bmsW, height: bmsH)
             context.setShadow(offset: .zero, blur: 0, color: nil)
