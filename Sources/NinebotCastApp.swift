@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WidgetKit
 
 @main
 struct NinebotProPlusApp: App {
@@ -57,6 +58,15 @@ struct NinebotProPlusApp: App {
         // 副作用：定位授权提示会提前到第一次打开 App（原来是第一
         // 次投屏时才弹），天气本来就要定位，不影响使用。
         _ = HUDData.shared
+        // Widget 测试（1.3.27）：每次启动往 App Group 共享存储写一个时间，
+        // 测试小组件能不能读到。读不到（NO DATA）说明 App Groups 跟自签名
+        // 安装合不来；读到了就能继续做完整版小组件。
+        if let shared = UserDefaults(suiteName: "group.com.corpsezhao.ninebotcast") {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MM-dd HH:mm:ss"
+            shared.set("App 已打开 \(fmt.string(from: Date()))", forKey: "NEWidgetTest")
+            WidgetCenter.shared.reloadAllTimelines()
+        }
     }
     var body: some Scene {
         WindowGroup {
