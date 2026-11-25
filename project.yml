@@ -114,20 +114,20 @@ targets:
 
   # App Groups 测试小组件（1.3.27）：只读共享存储里的 NEWidgetTest 并显示。
   # 读到时间 = App Groups 可用，继续做完整版；显示 NO DATA = 这条路不通。
-  # 注意：sources 必须显式列出 Swift 文件。1.3.27 第一版用目录路径
-  # Sources/Widget 时，xcodegen 没有把 NinebotWidget.swift 编进去，
-  # 打出来的 .appex 里一点 Swift 代码都没有（无 __swift5_types、
-  # 不链 WidgetKit/SwiftUI），小组件根本跑不起来。
+  # 注意：源码必须放在顶层 Widget/ 目录（仿照 Broadcast/ 的做法），
+  # 不能放在 Sources/Widget/ 下面——放在 Sources/ 下面时 xcodegen
+  # 不会把 Swift 文件编进扩展（两次构建打出来的 .appex 里都没有
+  # Swift 代码）。sources 用显式文件路径。
   NinebotWidget:
     type: app-extension
     platform: iOS
     sources:
-      - path: Sources/Widget/NinebotWidget.swift
+      - path: Widget/NinebotWidget.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.corpsezhao.ninebotcast.widget
     info:
-      path: Sources/Widget/Info.plist
+      path: Widget/Info.plist
       properties:
         CFBundleDisplayName: Ninebot Pro+
         CFBundleShortVersionString: "1.3.27"
